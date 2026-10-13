@@ -1,0 +1,28 @@
+[package]
+name = "fermentor_kopi"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "fermentor_kopi"
+harness = false
+
+[dependencies]
+embedded-hal = "1.0"
+
+[target.'cfg(target_arch = "xtensa")'.dependencies]
+esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
+esp-println = { version = "0.14", default-features = false, features = ["esp32s3", "jtag-serial", "critical-section"] }
+critical-section = "1.2"
+
+[profile.dev]
+opt-level = "s"
+debug = true
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = false
+overflow-checks = false

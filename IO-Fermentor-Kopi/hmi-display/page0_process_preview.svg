@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">
+  <defs>
+    <g id="gauge" fill="none" stroke-linecap="round">
+      <path d="M-17 18 A25 25 0 1 1 17 18" stroke="#31566d" stroke-width="3"/>
+      <path d="M-18 18l-3 3M-25 0h-4M-18-18l-3-3M0-25v-4M18-18l3-3M25 0h4M18 18l3 3" stroke="#6f91a7"/>
+      <circle r="2" fill="#56d9d7" stroke="none"/>
+    </g>
+  </defs>
+  <rect width="320" height="240" fill="#071725"/>
+  <rect width="320" height="26" fill="#0d2a42"/><rect y="25" width="320" height="2" fill="#56d9d7"/>
+  <g font-family="Arial,sans-serif" font-weight="700"><text x="8" y="18" font-size="13" fill="#f3f8fc">FERMENTOR KOPI</text><text x="310" y="17" text-anchor="end" font-size="9" fill="#56d9d7">PROCESS</text></g>
+  <g fill="#10283c" stroke="#274a61"><rect x="6.5" y="31.5" width="150" height="83" rx="4"/><rect x="163.5" y="31.5" width="150" height="83" rx="4"/><rect x="6.5" y="119.5" width="150" height="83" rx="4"/><rect x="163.5" y="119.5" width="150" height="83" rx="4"/></g>
+  <g fill="#afc0cf" font-family="Arial,sans-serif" font-size="9" font-weight="700" text-anchor="middle"><text x="81" y="47">DS18B20</text><text x="238" y="47">OXYGEN</text><text x="81" y="135">pH</text><text x="238" y="135">SCD41 CO2</text></g>
+  <g><g transform="translate(81 72)"><use href="#gauge"/><line y2="-18" stroke="#56d9d7" stroke-width="2" transform="rotate(294)"/></g><g transform="translate(238 72)"><use href="#gauge"/><line y2="-18" stroke="#56d9d7" stroke-width="2" transform="rotate(91)"/></g><g transform="translate(81 160)"><use href="#gauge"/><line y2="-18" stroke="#56d9d7" stroke-width="2" transform="rotate(357)"/></g><g transform="translate(238 160)"><use href="#gauge"/><line y2="-18" stroke="#56d9d7" stroke-width="2" transform="rotate(258)"/></g></g>
+  <g fill="#f3f8fc" font-family="Arial,sans-serif" font-size="11" font-weight="700" text-anchor="middle"><text x="81" y="107">25.42 C</text><text x="238" y="107">20.90 %</text><text x="81" y="195">6.85</text><text x="238" y="195">612 ppm</text></g>
+  <rect y="209" width="320" height="31" fill="#0b2133"/>
+  <g stroke="#31566d"><rect x="6.5" y="212.5" width="97" height="24" rx="3" fill="#56d9d7"/><rect x="111.5" y="212.5" width="97" height="24" rx="3" fill="#18364c"/><rect x="216.5" y="212.5" width="97" height="24" rx="3" fill="#18364c"/></g>
+  <g font-family="Arial,sans-serif" font-size="9" font-weight="700" text-anchor="middle"><text x="55" y="229" fill="#071b2c">PROCESS</text><text x="160" y="229" fill="#afc0cf">ENVIRONMENT</text><text x="265" y="229" fill="#afc0cf">CONTROL</text></g>
+</svg>

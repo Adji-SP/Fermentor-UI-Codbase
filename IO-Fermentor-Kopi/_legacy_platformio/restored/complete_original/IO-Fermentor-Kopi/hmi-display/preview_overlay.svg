@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">
+  <g fill="#f3f8fc" font-family="Segoe UI,Arial,sans-serif" font-size="11" font-weight="700">
+    <text x="79" y="47">25.42 C</text>
+    <text x="237" y="47">20.90 %</text>
+    <text x="79" y="69">6.85</text>
+    <text x="237" y="69">612 ppm</text>
+    <text x="79" y="91">25.31 C</text>
+    <text x="237" y="91">60.52 %</text>
+    <text x="79" y="113">24.98 C</text>
+    <text x="237" y="113">68.12 %</text>
+  </g>
+  <g fill="#8ea3b6" font-family="Segoe UI,Arial,sans-serif" font-size="10" font-weight="700">
+    <text x="79" y="135">DISABLED</text>
+    <text x="237" y="135">DISABLED</text>
+    <text x="69" y="162">OFF</text>
+  </g>
+  <text x="220" y="162" fill="#f3f8fc" font-family="Segoe UI,Arial,sans-serif" font-size="10" font-weight="700">64/255 (25%)</text>
+
+  <rect x="10" y="180" width="96" height="30" rx="4" fill="#4dd6b8"/>
+  <rect x="112" y="180" width="96" height="30" rx="4" fill="#589acc"/>
+  <rect x="214" y="180" width="96" height="30" rx="4" fill="#e96b73"/>
+  <g fill="#071b2c" font-family="Segoe UI,Arial,sans-serif" font-size="12" font-weight="700" text-anchor="middle">
+    <text x="58" y="200">ON FWD</text>
+    <text x="160" y="200">ON REV</text>
+    <text x="262" y="200">OFF / STOP</text>
+  </g>
+  <rect x="70" y="218" width="240" height="17" rx="3" fill="#315067" stroke="#6f91a7" stroke-width="0.8"/>
+  <rect x="74" y="225" width="225" height="3" rx="1.5" fill="#9bb3c1"/>
+  <rect x="74" y="225" width="56" height="3" rx="1.5" fill="#56d9d7"/>
+  <rect x="125" y="216" width="13" height="21" rx="3" fill="#56d9d7" stroke="#b5f0e9" stroke-width="0.7"/>
+</svg>

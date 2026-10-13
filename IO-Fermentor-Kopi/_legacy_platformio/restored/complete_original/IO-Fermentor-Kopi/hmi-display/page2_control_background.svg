@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">
+  <rect width="320" height="240" fill="#071725"/>
+  <rect width="320" height="26" fill="#0d2a42"/>
+  <rect y="25" width="320" height="2" fill="#56d9d7"/>
+  <g font-family="Arial,sans-serif" font-weight="700">
+    <text x="8" y="18" font-size="13" fill="#f3f8fc">FERMENTOR KOPI</text>
+    <text x="310" y="17" text-anchor="end" font-size="9" fill="#56d9d7">MOTOR CONTROL</text>
+  </g>
+  <g fill="#10283c" stroke="#274a61">
+    <rect x="6.5" y="32.5" width="307" height="42" rx="4"/>
+    <rect x="6.5" y="143.5" width="307" height="59" rx="4"/>
+  </g>
+  <line x1="190" y1="38" x2="190" y2="69" stroke="#31566d"/>
+  <g fill="#afc0cf" font-family="Arial,sans-serif" font-size="9" font-weight="700">
+    <text x="14" y="49">MOTOR STATE</text>
+    <text x="205" y="49">PWM</text>
+    <text x="10" y="91">DIRECTION</text>
+    <text x="14" y="159">SPEED</text>
+  </g>
+  <rect y="209" width="320" height="31" fill="#0b2133"/>
+</svg>
