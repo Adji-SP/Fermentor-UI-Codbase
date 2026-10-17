@@ -55,6 +55,7 @@ pub struct Nextion<'d> {
     slider_touched: bool,
     refresh: bool,
     slider_sync: bool,
+    controls_sync: bool,
     readings: Readings,
 }
 
@@ -71,6 +72,7 @@ impl<'d> Nextion<'d> {
             slider_touched: false,
             refresh: true,
             slider_sync: true,
+            controls_sync: true,
             readings: Readings::waiting(),
         }
     }
@@ -138,15 +140,7 @@ impl<'d> Nextion<'d> {
             7 => self.show_reading("t7", r.scd_rh, Unit::Percent),
             8 => self.show_reading("t8", r.sht_rh, Unit::Percent),
             9 => {
-                let state = if motor.pending() != Direction::Stop {
-                    "SWITCHING"
-                } else {
-                    match motor.direction() {
-                        Direction::Forward => "ON FWD",
-                        Direction::Reverse => "ON REV",
-                        Direction::Stop => "OFF",
-                    }
-                };
+                let state = motor.status_text();
                 self.set_text(
                     "t9",
                     format_args!("{state}"),
@@ -170,10 +164,17 @@ impl<'d> Nextion<'d> {
                 self.end_command();
                 self.slider_sync = false;
             }
+            12 if self.controls_sync => self.send_literal("b0.txt=\"RESUME\""),
+            13 if self.controls_sync => self.send_literal("b1.txt=\"LOCKED\""),
+            14 if self.controls_sync => self.send_literal("tsw b1,0"),
+            15 if self.controls_sync => {
+                self.send_literal("tsw h0,0");
+                self.controls_sync = false;
+            }
             _ => {}
         }
         self.publish_index += 1;
-        if self.publish_index >= 12 {
+        if self.publish_index >= 16 {
             self.refresh = false;
         }
     }
@@ -187,14 +188,13 @@ impl<'d> Nextion<'d> {
         if page == 0 {
             if self.active_page != Some(0) {
                 self.slider_sync = true;
+                self.controls_sync = true;
                 self.request_refresh();
             }
             self.last_page_reply = Instant::now();
             motor.keepalive();
         } else {
-            if motor.direction() != Direction::Stop || motor.pending() != Direction::Stop {
-                motor.request_direction(Direction::Stop);
-            }
+            motor.hmi_disconnected();
             self.slider_request = None;
             self.slider_touched = false;
         }
@@ -204,12 +204,13 @@ impl<'d> Nextion<'d> {
     fn handle_event(&mut self, event: Event, motor: &mut Motor<'_>) {
         match event {
             Event::Ready => {
-                motor.request_direction(Direction::Stop);
+                motor.hmi_disconnected();
                 self.active_page = None;
                 self.last_probe = None;
                 self.slider_request = None;
                 self.slider_touched = false;
                 self.slider_sync = true;
+                self.controls_sync = true;
                 self.request_refresh();
             }
             Event::Page(page) => self.page_received(page, motor),
@@ -217,10 +218,19 @@ impl<'d> Nextion<'d> {
                 self.page_received(page, motor);
                 if page == 0 {
                     self.slider_sync = true;
+                    self.controls_sync = true;
                     self.request_refresh();
                 }
             }
             Event::Ascii(Command::Stop) => motor.request_direction(Direction::Stop),
+            // STOP is accepted even while recovering the page handshake.
+            Event::Touch {
+                page: 0,
+                component: 15,
+                pressed: false,
+            } => {
+                motor.request_direction(Direction::Stop);
+            }
             Event::Ascii(command) if self.active_page == Some(0) => match command {
                 Command::Keepalive => motor.keepalive(),
                 Command::Forward => motor.request_direction(Direction::Forward),
@@ -228,6 +238,8 @@ impl<'d> Nextion<'d> {
                 Command::Speed(speed) => {
                     self.slider_request = None;
                     motor.set_speed(speed);
+                    self.slider_sync = true;
+                    self.request_refresh();
                 }
                 _ => {}
             },
@@ -259,6 +271,8 @@ impl<'d> Nextion<'d> {
                         && value <= 255
                     {
                         motor.set_speed(value as u8);
+                        self.slider_sync = true;
+                        self.request_refresh();
                     } else {
                         self.slider_sync = true;
                         self.request_refresh();
@@ -300,7 +314,7 @@ impl<'d> Nextion<'d> {
             self.active_page = None;
             self.slider_request = None;
             self.slider_touched = false;
-            motor.request_direction(Direction::Stop);
+            motor.hmi_disconnected();
         }
         if self
             .slider_request
