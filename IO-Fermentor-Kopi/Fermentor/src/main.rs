@@ -31,10 +31,13 @@ use esp_println::println;
 
 use ds18b20::Ds18b20;
 use motor::Motor;
-use sensors::{O2Average, O2Warmup, Reading, Readings, ScdSample, SensorError, Status};
+use sensors::{
+    O2Average, O2Warmup, Reading, Readings, RetryGate, ScdSample, SensorError, Status,
+};
 
-const SAMPLE_INTERVAL_MS: u64 = 5_000;
-const FIRST_SAMPLE_DELAY_MS: u64 = 400; // DS18B20 11-bit conversion, not O2 warm-up.
+fn uptime_ms() -> u64 {
+    Instant::now().duration_since_epoch().as_millis()
+}
 
 /// Sensor conversion waits keep USB RX, status reporting and motor timers alive.
 /// No Nextion UART is initialized or serviced in this build.
@@ -58,7 +61,11 @@ impl embedded_hal::delay::DelayNs for ServiceDelay<'_, '_, '_> {
 }
 
 fn sensor_error(name: &str, error: SensorError) -> Reading {
-    println!("[{name}] {error:?}");
+    // Offline only means the re-init retry is not due; the cause was printed
+    // when the device first failed.
+    if error != SensorError::Offline {
+        println!("[{name}] {error:?}");
+    }
     error.reading()
 }
 
@@ -80,7 +87,7 @@ fn print_reading(name: &str, reading: Reading, unit: &str) {
 fn main() -> ! {
     // Bit-banged DS18B20 slots use 240 cycles/us; request that clock explicitly.
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
-    let mut o2_warmup = O2Warmup::new(Instant::now().duration_since_epoch().as_millis());
+    let mut o2_warmup = O2Warmup::new(uptime_ms());
 
     // Disable the bridge first, before any sensor initialization.
     let l_en = Output::new(peripherals.GPIO5, Level::Low, OutputConfig::default());
@@ -127,7 +134,7 @@ fn main() -> ! {
         .with_scl(peripherals.GPIO9);
     let mut ds18b20 = Ds18b20::new(peripherals.GPIO12);
     let mut o2_average = O2Average::new();
-    let mut scd_online = {
+    let scd_online = {
         let mut delay = ServiceDelay {
             motor: &mut motor,
             usb: &mut usb,
@@ -137,6 +144,10 @@ fn main() -> ! {
         embedded_hal::delay::DelayNs::delay_ms(&mut delay, sensors::SCD_POWER_UP_MS);
         sensors::scd_start(&mut i2c, &mut delay).is_ok()
     };
+    // ADS1115 and O2 are initialized in their first slot.
+    let mut ads = RetryGate::new();
+    let mut o2 = RetryGate::new();
+    let mut scd = RetryGate::started(scd_online, uptime_ms());
     let _ = ds18b20.request();
 
     println!("=== Fermentor Kopi Rust / ESP32-S3 ===");
@@ -155,106 +166,135 @@ fn main() -> ! {
         if scd_online { "OK" } else { "OFFLINE" }
     );
     println!("[O2] Startup warm-up: 3 minutes; valid readings are shown immediately and may still be settling.");
+    println!(
+        "[pH calibration] pH {:.2} at {:.2} mV; pH {:.2} at {:.2} mV; no offset; does not fix drift",
+        sensors::PH_NEUTRAL_PH,
+        sensors::PH_NEUTRAL_MV,
+        sensors::PH_ACID_PH,
+        sensors::PH_ACID_MV
+    );
 
     let mut readings = Readings::waiting();
-    let mut last_sample = Instant::now();
-    let mut first_sample = true;
+    let mut last_slot = Instant::now();
+    let mut slot = 0u8;
     // Other sensors can publish before SCD41's first 5-second data-ready event.
 
     loop {
         usb.service(&mut motor);
         let now = Instant::now();
-        let sample_interval = if first_sample {
-            FIRST_SAMPLE_DELAY_MS
-        } else {
-            SAMPLE_INTERVAL_MS
-        };
-        if (now - last_sample).as_millis() >= sample_interval {
-            first_sample = false;
-            last_sample = now;
-            println!("\n================ SENSOR READINGS ================");
-
+        if (now - last_slot).as_millis() >= sensors::SENSOR_SLOT_MS {
+            last_slot = now;
             let mut delay = ServiceDelay {
                 motor: &mut motor,
                 usb: &mut usb,
             };
-            readings.process_temp = ds18b20.sample();
-            print_reading("DS18B20", readings.process_temp, "C");
-
-            readings.ph = match sensors::read_ads_voltage(&mut i2c, 0, &mut delay) {
-                Ok(voltage) => {
-                    println!("pH input   : {:.1} mV", voltage * 1000.0);
-                    sensors::ph_from_voltage(voltage)
-                        .map(Reading::ok)
-                        .unwrap_or_else(Reading::error)
+            // One sensor per slot; the print order stays that of the original
+            // SENSOR READINGS block, which the dashboard parser relies on.
+            match slot {
+                0 => {
+                    println!("\n================ SENSOR READINGS ================");
+                    readings.process_temp = ds18b20.sample();
+                    print_reading("DS18B20", readings.process_temp, "C");
                 }
-                Err(error) => sensor_error("pH/ADS", error),
-            };
-            print_reading("pH/ADS", readings.ph, "pH");
-            readings.pressure = match sensors::read_ads_voltage(&mut i2c, 1, &mut delay) {
-                Ok(voltage) => {
-                    println!("Pressure in: {voltage:.3} V");
-                    sensors::pressure_from_voltage(voltage)
-                        .map(Reading::ok)
-                        .unwrap_or_else(Reading::error)
+                1 => {
+                    readings.ph = match ads.run(
+                        &mut i2c,
+                        &mut delay,
+                        uptime_ms(),
+                        |i2c, _| sensors::ads_probe(i2c),
+                        |i2c, delay| sensors::read_ads_voltage(i2c, 0, delay),
+                    ) {
+                        Ok(voltage) => {
+                            println!("pH input   : {:.1} mV", voltage * 1000.0);
+                            sensors::ph_from_voltage(voltage)
+                                .map(Reading::ok)
+                                .unwrap_or_else(Reading::error)
+                        }
+                        Err(error) => sensor_error("pH/ADS", error),
+                    };
+                    print_reading("pH/ADS", readings.ph, "pH");
                 }
-                Err(error) => sensor_error("Pressure/ADS", error),
-            };
-            print_reading("Pressure", readings.pressure, "bar");
-
-            let oxygen_result = o2_average.read(&mut i2c, &mut delay);
-            if let Err(error) = oxygen_result {
-                println!("[O2] {error:?}");
-            }
-            readings.oxygen = o2_warmup.reading(
-                oxygen_result,
-                Instant::now().duration_since_epoch().as_millis(),
-            );
-            print_reading("O2", readings.oxygen, "%Vol");
-
-            if !scd_online {
-                scd_online = sensors::scd_start(&mut i2c, &mut delay).is_ok();
-            }
-            readings.co2 = if scd_online {
-                Reading::wait()
-            } else {
-                Reading::offline()
-            };
-            readings.scd_temp = readings.co2;
-            readings.scd_rh = readings.co2;
-            if scd_online {
-                match sensors::scd_read(&mut i2c, &mut delay) {
-                    Ok(ScdSample::Values(co2, temp, rh)) => {
-                        readings.co2 = Reading::ok(co2 as f32);
-                        readings.scd_temp = Reading::ok(temp);
-                        readings.scd_rh = Reading::ok(rh);
+                2 => {
+                    readings.pressure = match ads.run(
+                        &mut i2c,
+                        &mut delay,
+                        uptime_ms(),
+                        |i2c, _| sensors::ads_probe(i2c),
+                        |i2c, delay| sensors::read_ads_voltage(i2c, 1, delay),
+                    ) {
+                        Ok(voltage) => {
+                            println!("Pressure in: {voltage:.3} V");
+                            sensors::pressure_from_voltage(voltage)
+                                .map(Reading::ok)
+                                .unwrap_or_else(Reading::error)
+                        }
+                        Err(error) => sensor_error("Pressure/ADS", error),
+                    };
+                    print_reading("Pressure", readings.pressure, "bar");
+                }
+                3 => {
+                    let oxygen_result = o2.run(
+                        &mut i2c,
+                        &mut delay,
+                        uptime_ms(),
+                        |i2c, _| sensors::o2_probe(i2c),
+                        |i2c, delay| o2_average.read(i2c, delay),
+                    );
+                    if let Err(error) = oxygen_result {
+                        if error != SensorError::Offline {
+                            println!("[O2] {error:?}");
+                        }
                     }
-                    Ok(ScdSample::Waiting) => {}
-                    Err(error) => {
-                        readings.co2 = sensor_error("SCD41", error);
-                        readings.scd_temp = readings.co2;
-                        readings.scd_rh = readings.co2;
-                        scd_online = false;
+                    readings.oxygen = o2_warmup.reading(oxygen_result, uptime_ms());
+                    print_reading("O2", readings.oxygen, "%Vol");
+                }
+                4 => {
+                    match scd.run(
+                        &mut i2c,
+                        &mut delay,
+                        uptime_ms(),
+                        |i2c, delay| sensors::scd_start(i2c, delay),
+                        |i2c, delay| sensors::scd_read(i2c, delay),
+                    ) {
+                        Ok(ScdSample::Values(co2, temp, rh)) => {
+                            readings.co2 = Reading::ok(co2 as f32);
+                            readings.scd_temp = Reading::ok(temp);
+                            readings.scd_rh = Reading::ok(rh);
+                        }
+                        // Data not ready yet: keep the last valid values.
+                        Ok(ScdSample::Waiting) => {
+                            if readings.co2.status != Status::Ok {
+                                readings.co2 = Reading::wait();
+                                readings.scd_temp = readings.co2;
+                                readings.scd_rh = readings.co2;
+                            }
+                        }
+                        Err(error) => {
+                            readings.co2 = sensor_error("SCD41", error);
+                            readings.scd_temp = readings.co2;
+                            readings.scd_rh = readings.co2;
+                        }
                     }
+                    print_reading("CO2", readings.co2, "ppm");
+                    print_reading("SCD41 T", readings.scd_temp, "C");
+                    print_reading("SCD41 RH", readings.scd_rh, "%RH");
+                }
+                _ => {
+                    match sensors::sht30_read(&mut i2c, &mut delay) {
+                        Ok((temp, rh)) => {
+                            readings.sht_temp = Reading::ok(temp);
+                            readings.sht_rh = Reading::ok(rh);
+                        }
+                        Err(error) => {
+                            readings.sht_temp = sensor_error("SHT30", error);
+                            readings.sht_rh = readings.sht_temp;
+                        }
+                    }
+                    print_reading("SHT30 T", readings.sht_temp, "C");
+                    print_reading("SHT30 RH", readings.sht_rh, "%RH");
                 }
             }
-            print_reading("CO2", readings.co2, "ppm");
-            print_reading("SCD41 T", readings.scd_temp, "C");
-            print_reading("SCD41 RH", readings.scd_rh, "%RH");
-
-            match sensors::sht30_read(&mut i2c, &mut delay) {
-                Ok((temp, rh)) => {
-                    readings.sht_temp = Reading::ok(temp);
-                    readings.sht_rh = Reading::ok(rh);
-                }
-                Err(error) => {
-                    readings.sht_temp = sensor_error("SHT30", error);
-                    readings.sht_rh = readings.sht_temp;
-                }
-            }
-            print_reading("SHT30 T", readings.sht_temp, "C");
-            print_reading("SHT30 RH", readings.sht_rh, "%RH");
-
+            slot = (slot + 1) % sensors::SENSOR_SLOT_COUNT;
             usb.service(&mut motor);
         }
         esp_hal::delay::Delay::new().delay_millis(1);

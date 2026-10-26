@@ -9,6 +9,12 @@ pub const SCD_ADDR: u8 = 0x62;
 pub const SHT30_ADDR: u8 = 0x44;
 pub const O2_WARMUP_MS: u64 = 180_000;
 pub const SCD_POWER_UP_MS: u32 = 30;
+/// Sensors are read in turn, one per slot, so no two I2C jobs ever overlap.
+/// Six slots (DS18B20, pH, pressure, O2, SCD41, SHT30) give a ~5 s cycle.
+pub const SENSOR_SLOT_MS: u64 = 833;
+pub const SENSOR_SLOT_COUNT: u8 = 6;
+/// An offline I2C device is re-initialized at most once per this interval.
+pub const SENSOR_RETRY_MS: u64 = 5_000;
 /// Keep bus failures distinct from invalid samples for HMI and serial diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SensorError {
@@ -17,11 +23,13 @@ pub enum SensorError {
     InvalidData,
     Timeout,
     InvalidChannel,
+    /// Device is marked offline and its next re-init is not due yet.
+    Offline,
 }
 
 impl SensorError {
     pub fn reading(self) -> Reading {
-        if matches!(self, Self::Bus(ErrorKind::NoAcknowledge(_))) {
+        if matches!(self, Self::Bus(ErrorKind::NoAcknowledge(_)) | Self::Offline) {
             Reading::offline()
         } else {
             Reading::error()
@@ -138,8 +146,82 @@ impl Readings {
     }
 }
 
+/// Online/re-init bookkeeping for one I2C device, like the C++ adsOk/o2Ok/scdOk
+/// flags. Any failed read marks the device offline; it is probed again on its
+/// next slot once SENSOR_RETRY_MS has passed since the previous probe.
+pub struct RetryGate {
+    online: bool,
+    last_probe_ms: Option<u64>,
+}
+
+impl Default for RetryGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RetryGate {
+    /// Not initialized yet: the first slot probes immediately.
+    pub const fn new() -> Self {
+        Self {
+            online: false,
+            last_probe_ms: None,
+        }
+    }
+
+    /// Already probed during boot.
+    pub const fn started(online: bool, now_ms: u64) -> Self {
+        Self {
+            online,
+            last_probe_ms: Some(now_ms),
+        }
+    }
+
+    pub fn run<I, D, T>(
+        &mut self,
+        i2c: &mut I,
+        delay: &mut D,
+        now_ms: u64,
+        probe: impl FnOnce(&mut I, &mut D) -> Result<(), SensorError>,
+        read: impl FnOnce(&mut I, &mut D) -> Result<T, SensorError>,
+    ) -> Result<T, SensorError> {
+        if !self.online {
+            if self
+                .last_probe_ms
+                .is_some_and(|last| now_ms.saturating_sub(last) < SENSOR_RETRY_MS)
+            {
+                return Err(SensorError::Offline);
+            }
+            self.last_probe_ms = Some(now_ms);
+            probe(i2c, delay)?;
+            self.online = true;
+        }
+        let result = read(i2c, delay);
+        self.online = result.is_ok();
+        result
+    }
+}
+
+/// ADS1115 init check: the config register must be readable.
+pub fn ads_probe<I: embedded_hal::i2c::I2c>(i2c: &mut I) -> Result<(), SensorError> {
+    let mut config = [0u8; 2];
+    i2c.write_read(ADS_ADDR, &[0x01], &mut config)
+        .map_err(|error| SensorError::Bus(error.kind()))
+}
+
+/// SEN0322 init check: the device must ACK its key register address.
+pub fn o2_probe<I: embedded_hal::i2c::I2c>(i2c: &mut I) -> Result<(), SensorError> {
+    i2c.write(O2_ADDR, &[0x0A])
+        .map_err(|error| SensorError::Bus(error.kind()))
+}
+
+const ADS_SAMPLES: i32 = 8;
+const ADS_READY_POLLS: u32 = 80;
+const ADS_READY_POLL_US: u32 = 250;
+
 // ADS1115: A0 pH at +/-4.096 V; A1 pressure at +/-6.144 V.
-// 128 SPS single-shot conversions; average 10 samples like the C++ firmware.
+// 860 SPS single-shot conversions (~1.2 ms each); average 8 samples like the
+// C++ firmware. Each conversion's ready bit is polled for up to ~20 ms.
 pub fn read_ads_voltage<I: embedded_hal::i2c::I2c>(
     i2c: &mut I,
     channel: u8,
@@ -150,22 +232,21 @@ pub fn read_ads_voltage<I: embedded_hal::i2c::I2c>(
     }
     let mux = if channel == 0 { 0x4000 } else { 0x5000 };
     let gain = if channel == 0 { 0x0200 } else { 0x0000 };
-    let config: u16 = 0x8000 | mux | gain | 0x0100 | 0x0080 | 0x0003;
+    let config: u16 = 0x8000 | mux | gain | 0x0100 | 0x00E0 | 0x0003;
     let mut total = 0i32;
-    for _ in 0..10 {
+    for _ in 0..ADS_SAMPLES {
         i2c.write(ADS_ADDR, &[0x01, (config >> 8) as u8, config as u8])
             .map_err(|error| SensorError::Bus(error.kind()))?;
-        delay.delay_ms(9);
         let mut state = [0u8; 2];
         let mut ready = false;
-        for _ in 0..30 {
+        for _ in 0..ADS_READY_POLLS {
+            delay.delay_us(ADS_READY_POLL_US);
             i2c.write_read(ADS_ADDR, &[0x01], &mut state)
                 .map_err(|error| SensorError::Bus(error.kind()))?;
             if state[0] & 0x80 != 0 {
                 ready = true;
                 break;
             }
-            delay.delay_ms(1);
         }
         if !ready {
             return Err(SensorError::Timeout);
@@ -177,13 +258,23 @@ pub fn read_ads_voltage<I: embedded_hal::i2c::I2c>(
     }
     let full_scale = if channel == 0 { 4.096 } else { 6.144 };
     // Match the C++ int16_t average before Adafruit computeVolts.
-    Ok((total / 10) as f32 * full_scale / 32_768.0)
+    Ok((total / ADS_SAMPLES) as f32 * full_scale / 32_768.0)
 }
 
+/// Two-buffer calibration measured with ../PH-Calibration on 2026-10-25
+/// (filtered ADS1115 A0 millivolts). This module's voltage FALLS toward acid.
+/// Replaces the DFRobot example points (1500.00 / 2032.44 mV) and the
+/// temporary -1.10 image-based offset; no offset is applied on top.
+pub const PH_NEUTRAL_PH: f32 = 6.85;
+pub const PH_NEUTRAL_MV: f32 = 1742.47;
+pub const PH_ACID_PH: f32 = 4.00;
+pub const PH_ACID_MV: f32 = 1667.72;
+
 pub fn ph_from_voltage(voltage: f32) -> Option<f32> {
-    const NEUTRAL_MV: f32 = 1500.0;
-    const ACID_MV: f32 = 2032.44;
-    let ph = 7.0 + (4.0 - 7.0) * (voltage * 1_000.0 - NEUTRAL_MV) / (ACID_MV - NEUTRAL_MV);
+    let ph = PH_NEUTRAL_PH
+        + (PH_ACID_PH - PH_NEUTRAL_PH) * (voltage * 1_000.0 - PH_NEUTRAL_MV)
+            / (PH_ACID_MV - PH_NEUTRAL_MV);
+    // Out-of-range values report ERROR; never clamp to conceal invalid data.
     if ph.is_finite() && (0.0..=14.0).contains(&ph) {
         Some(ph)
     } else {

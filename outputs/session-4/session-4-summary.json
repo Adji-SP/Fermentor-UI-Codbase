@@ -1,0 +1,75 @@
+{
+  "source": "e:/download/session (4).csv",
+  "sensor_samples": 199,
+  "total_records": 1609,
+  "first_sample_utc": "2026-10-20T15:22:31.905Z",
+  "last_sample_utc": "2026-10-20T15:39:01.496Z",
+  "first_sample_wib": "22:22:31",
+  "last_sample_wib": "22:39:01",
+  "duration_minutes": 16.492861666666965,
+  "metrics": {
+    "process_temp": {
+      "unit": "°C",
+      "count": 199,
+      "min": 24.87,
+      "max": 25.12,
+      "mean": 24.94351758793974
+    },
+    "sht_temp": {
+      "unit": "°C",
+      "count": 199,
+      "min": 25.68,
+      "max": 26.24,
+      "mean": 25.890050251256266
+    },
+    "scd_temp": {
+      "unit": "°C",
+      "count": 199,
+      "min": 27.71,
+      "max": 28.2,
+      "mean": 27.95075376884423
+    },
+    "sht_rh": {
+      "unit": "%RH",
+      "count": 199,
+      "min": 64.4,
+      "max": 65.9,
+      "mean": 64.80050251256269
+    },
+    "scd_rh": {
+      "unit": "%RH",
+      "count": 199,
+      "min": 67.8,
+      "max": 69.3,
+      "mean": 68.43417085427134
+    },
+    "co2": {
+      "unit": "ppm",
+      "count": 199,
+      "min": 444,
+      "max": 493,
+      "mean": 471.8643216080402
+    },
+    "o2": {
+      "unit": "%vol",
+      "count": 199,
+      "min": 21.47,
+      "max": 21.75,
+      "mean": 21.609648241206035
+    },
+    "ph": {
+      "unit": "pH",
+      "count": 199,
+      "min": 6.14,
+      "max": 6.4,
+      "mean": 6.264723618090456
+    },
+    "pressure": {
+      "unit": "bar",
+      "count": 199,
+      "min": 2.181,
+      "max": 2.809,
+      "mean": 2.3806582914572876
+    }
+  }
+}

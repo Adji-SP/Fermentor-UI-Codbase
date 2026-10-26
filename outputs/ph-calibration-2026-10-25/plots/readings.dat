@@ -1,0 +1,5 @@
+# mV true_pH kind(0=neutral,1=acid) label_dx_mV label
+1749.963 6.86 0  7 "6.86 first"
+1742.47  6.85 0 -7 "6.85 latest"
+1648.40  4.00 1  7 "4.00 first"
+1667.72  4.00 1  7 "4.00 latest"

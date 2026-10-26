@@ -29,7 +29,7 @@ behavior (it has older PT100 and O2-address assumptions).
 | Device | ESP32-S3 connection | Rust behavior |
 | --- | --- | --- |
 | DS18B20 | DQ GPIO12, external VDD and GND | 1-Wire, 11-bit, CRC-checked; no SPI clock |
-| ADS1115 pH + pressure | SDA GPIO8, SCL GPIO9, address 0x48 | A0 pH, A1 pressure, 10 single-shot samples each |
+| ADS1115 pH + pressure | SDA GPIO8, SCL GPIO9, address 0x48 | A0 pH, A1 pressure, 8 single-shot samples each at 860 SPS |
 | DFRobot O2 | same I2C bus, address 0x70 | Reads existing calibration key; no automatic calibration write |
 | SCD41 | same I2C bus, address 0x62 | 5-second periodic CO2/temperature/RH measurement, CRC checked |
 | SHT30 | same I2C bus, address 0x44 | temperature/RH, CRC checked; no SHT20 fallback |
@@ -42,10 +42,37 @@ DS18B20 is **not** on I2C and must have a pull-up from DQ to 3.3 V (typically
 1-Wire data. The code assumes the DS18B20 has a separate 3.3 V VDD connection
 (not parasite power) and only one DS18B20 on GPIO12.
 
-The original pH calibration points and pressure 0.5-4.5 V / 0-1.2 MPa mapping
-are retained. Calibrate those values on the real hardware before relying on
-absolute readings. O2 readings outside 0-30 %vol are never published as values;
-the startup policy below decides between a warm-up indication and an error.
+The pressure 0.5-4.5 V / 0-1.2 MPa mapping is retained. pH uses the measured
+two-buffer calibration below. O2 readings outside 0-30 %vol are never
+published as values; the startup policy below decides between a warm-up
+indication and an error.
+
+## pH two-buffer calibration (2026-10-25)
+
+`src/sensors.rs` uses points measured with `../PH-Calibration` (filtered
+ADS1115 A0 millivolts, saved and exported there):
+
+| Buffer | Voltage |
+| --- | --- |
+| pH 6.85 | 1742.47 mV |
+| pH 4.00 | 1667.72 mV |
+
+```text
+pH = 6.85 + (mV - 1742.47) * (4.00 - 6.85) / (1667.72 - 1742.47)
+```
+
+- This module's voltage **falls** toward acid (~26 mV/pH). The previous DFRobot
+  example points (pH 7 = 1500.00 mV, pH 4 = 2032.44 mV) assumed the opposite
+  direction and were removed.
+- The temporary image-based -1.10 pH offset was removed; no offset is applied.
+- USB `pH/ADS` publishes the calibrated value; `pH input` still prints raw mV.
+  Startup prints the active points as a `[pH calibration]` event line.
+- Values outside 0-14 report ERROR; they are never clamped.
+- The probe drifted 7-20 mV between repeated buffer readings, roughly
+  0.3-0.7 pH at this slope. Recheck buffers and recalibrate after probe
+  maintenance. This firmware averages 10 conversions per reading, without the
+  calibration tool's 64-sample outlier filter, so readings are noisier.
+- Firmware must be flashed for any source/build change to affect the ESP32.
 
 ## Sensor startup and warm-up
 
@@ -80,7 +107,15 @@ The firmware cannot detect independent sensor power cycles or probe settling.
 | SCD41 | Explicit 30 ms power-up guard, existing 500 ms stop/start wait, then data-ready polling for 5 s periodic measurements |
 | DS18B20 | Existing 400 ms conversion guard for 11-bit operation (375 ms maximum conversion) |
 | SHT30 | Existing 20 ms high-repeatability measurement wait and CRC checks; initial setup already exceeds its short power-up time |
-| ADS1115 pH/pressure | Existing 9 ms conversion wait plus ready-bit polling for each of ten samples at 128 SPS; no invented multi-minute delay |
+| ADS1115 pH/pressure | Ready-bit polling (up to ~20 ms) for each of eight samples at 860 SPS (~1.2 ms per conversion); no invented multi-minute delay |
+
+Sensors are read in turn, one per 833 ms slot (DS18B20, pH, pressure, O2,
+SCD41, SHT30), so no two I2C jobs overlap and one full cycle takes about 5 s.
+The `SENSOR READINGS` header is printed with the DS18B20 slot and each sensor's
+lines follow in its own slot, in the same order as before. A failed ADS1115,
+O2 or SCD41 read marks that device offline; it is re-initialized on its next
+slot at most once every 5 s and shows `OFFLINE` in between. When the SCD41 has
+no new data yet, its last valid values are kept.
 
 Timing references: [SCD4x datasheet](https://sensirion.com/media/documents/48C4B7FB/67FE0194/CD_DS_SCD4x_Datasheet_D1.pdf),
 [DS18B20 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/ds18b20.pdf),
